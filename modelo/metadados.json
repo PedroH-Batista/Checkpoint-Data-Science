@@ -1,8 +1,17 @@
 {
-  "modelo_nome": "Random Forest - Baseline",
-  "algoritmo": "Random Forest",
-  "hiperparametros_alterados": {},
-  "data_treino": "2026-10-08 17:29",
+  "modelo_nome": "XGBoost - Optuna",
+  "algoritmo": "XGBoost",
+  "hiperparametros_alterados": {
+    "n_estimators": 450,
+    "max_depth": 6,
+    "learning_rate": 0.03498232418014451,
+    "subsample": 0.6679523489472632,
+    "colsample_bytree": 0.7095872243327693,
+    "min_child_weight": 1,
+    "reg_lambda": 1.1670284406264186,
+    "scale_pos_weight": 10
+  },
+  "data_treino": "2026-10-08 18:05",
   "features": [
     "V1",
     "V2",
@@ -36,20 +45,20 @@
     "hora_relativa"
   ],
   "variavel_resposta": "Class",
-  "limiar_decisao": 0.4123852438537522,
+  "limiar_decisao": 0.5966403484344482,
   "prevalencia_treino": 0.0016653449643140364,
   "metrica_principal": "PR-AUC (Average Precision)",
   "metricas_cv": {
-    "AP_media": 0.8394209935590922,
-    "AP_dp": 0.0343764476086754
+    "AP_media": 0.855170171274354,
+    "AP_dp": 0.0299540608021334
   },
   "metricas_teste": {
-    "PR-AUC (AP)": 0.7856827757858458,
-    "ROC-AUC": 0.9671712024407986,
-    "Precision": 0.9594594594594594,
-    "Recall": 0.7473684210526316,
-    "F1": 0.8402366863905325,
-    "MCC": 0.8465827850998813
+    "PR-AUC (AP)": 0.8161845662712663,
+    "ROC-AUC": 0.9809762265542764,
+    "Precision": 0.9722222222222222,
+    "Recall": 0.7368421052631579,
+    "F1": 0.8383233532934131,
+    "MCC": 0.8461766517862798
   },
   "ranges_treino": {
     "V1": {
@@ -206,16 +215,16 @@
     "hora_relativa": 15.0
   },
   "variaveis_mais_importantes": [
-    "V17",
     "V14",
-    "V12",
-    "V16",
+    "V17",
     "V10",
-    "V11",
-    "V9",
-    "V7",
+    "V12",
     "V4",
-    "V18"
+    "V11",
+    "V7",
+    "V19",
+    "V13",
+    "V20"
   ],
   "links": {
     "github": "https://github.com/PedroH-Batista/Checkpoint-Data-Science.git",

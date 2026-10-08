@@ -81,7 +81,7 @@ Os três algoritmos usam o mesmo teste, os mesmos folds, a mesma métrica e o me
 | Baseline | Random Forest, XGBoost e LightGBM com hiperparâmetros de referência, sem tratamento de desbalanceamento |
 | Grid Search | Grade de 8 combinações por algoritmo (complexidade, número de árvores e taxa de aprendizado), 5 folds |
 | Optuna | TPE com 20 trials por algoritmo, mesma métrica e mesmos folds; espaço inclui regularização, amostragem e tratamento de desbalanceamento |
-| Seleção | Nove configurações comparadas; regra do um desvio-padrão com preferência por menor gap treino-validação e menor custo |
+| Seleção | Nove configurações comparadas; escolhida a de maior PR-AUC média na validação cruzada |
 | Diagnóstico | Gap treino-validação, curva de aprendizado, curva Precision-Recall e matriz de confusão |
 
 ## Resultados
@@ -92,12 +92,12 @@ Execute o notebook até o final.
 
 | Configuração | AP treino | AP CV (média) | AP CV (dp) | Gap | Tempo por fold (s) |
 | --- | --- | --- | --- | --- | --- |
-| Random Forest - Baseline **(escolhida)** | 0.9605 | 0.8394 | 0.0344 | 0.1211 | 6.8 |
+| Random Forest - Baseline | 0.9605 | 0.8394 | 0.0344 | 0.1211 | 6.8 |
 | Random Forest - Grid Search | 0.9948 | 0.8436 | 0.0336 | 0.1512 | 15.7 |
 | Random Forest - Optuna | 0.9792 | 0.8401 | 0.0336 | 0.1391 | 18.4 |
 | XGBoost - Baseline | 1.0000 | 0.8403 | 0.0271 | 0.1597 | 1.4 |
 | XGBoost - Grid Search | 1.0000 | 0.8465 | 0.0261 | 0.1535 | 1.8 |
-| XGBoost - Optuna | 1.0000 | 0.8552 | 0.0300 | 0.1448 | 2.4 |
+| XGBoost - Optuna **(escolhida)** | 1.0000 | 0.8552 | 0.0300 | 0.1448 | 2.4 |
 | LightGBM - Baseline | 0.2715 | 0.2694 | 0.1595 | 0.0022 | 1.1 |
 | LightGBM - Grid Search | 0.8968 | 0.6648 | 0.0966 | 0.2320 | 1.8 |
 | LightGBM - Optuna | 1.0000 | 0.8549 | 0.0308 | 0.1451 | 1.1 |
@@ -106,13 +106,15 @@ Execute o notebook até o final.
 
 | Métrica | Valor |
 | --- | --- |
-| PR-AUC (AP) | 0.7857 |
-| ROC-AUC | 0.9672 |
-| Precision | 0.9595 |
-| Recall | 0.7474 |
-| F1 | 0.8402 |
-| MCC | 0.8466 |
-| Limiar de decisão | 0.4124 |
+| PR-AUC (AP) | 0.8162 |
+| ROC-AUC | 0.9810 |
+| Precision | 0.9722 |
+| Recall | 0.7368 |
+| F1 | 0.8383 |
+| MCC | 0.8462 |
+| Limiar de decisão | 0.5966 |
+
+No teste, o modelo detectou 70 das 95 fraudes (recall de 73,7%), com 2 falsos alertas entre 56.651 transações legítimas. A PR-AUC de teste (0,8162) ficou 1,30 desvio-padrão abaixo da validação cruzada (0,8552), resultado compatível com o desenvolvimento.
 
 **Modelo escolhido**: XGBoost - Optuna
 
@@ -151,16 +153,17 @@ streamlit run app.py
 ```
 
 O app carrega o pipeline salvo pelo notebook e permite:
-- inserir manualmente hora, valor e componentes `V1` a `V28`;
-- carregar casos do teste de consistência para reproduzir a previsão do notebook;
-- ver o alerta de extrapolação quando uma entrada sai do intervalo observado no treino;
-- conferir automaticamente a paridade entre a probabilidade do app e a do notebook.
+- escolher um perfil de transação (casos reais do conjunto de teste ou um perfil típico), que traz as características anonimizadas `V1` a `V28`;
+- ajustar o valor e o horário da compra e ver a pontuação de risco e o veredito (alerta ou legítima);
+- opcionalmente, editar as 28 características `V1` a `V28` do perfil (bloco "Avançado");
+- mostrar a resposta real do caso de teste e se o modelo acertou;
+- conferir a paridade entre a previsão do app e a do notebook (seção "Verificação técnica").
 
 ### Teste de paridade notebook–interface
 
 1. Execute o notebook completo (a seção 7.5 confirma a paridade com o pipeline carregado do disco).
-2. Rode `streamlit run app.py` e selecione, em "Origem dos dados", um dos casos do teste de consistência.
-3. A seção "Paridade com o notebook" mostra as duas probabilidades e a diferença absoluta.
+2. Rode `streamlit run app.py`, escolha uma das transações de exemplo (A, B, ...) e mantenha os valores originais.
+3. Abra "Verificação técnica: o app confere com o notebook?" para ver as duas probabilidades e a diferença absoluta.
 
 ### Deploy no Streamlit Community Cloud
 

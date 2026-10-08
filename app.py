@@ -11,8 +11,9 @@ CAMINHO_MODELO = BASE / "modelo" / "modelo.pkl"
 CAMINHO_META = BASE / "modelo" / "metadados.json"
 CAMINHO_EXEMPLOS = BASE / "modelo" / "exemplos_consistencia.csv"
 
-
 MOEDA = "€"
+TOLERANCIA_PARIDADE = 1e-4
+TIPICO = "tipico"
 
 st.set_page_config(page_title="Detector de Fraude", page_icon="🛡️", layout="centered")
 
@@ -44,6 +45,9 @@ exemplos = carregar_exemplos()
 features = meta["features"]
 limiar = float(meta["limiar_decisao"])
 mt = meta["metricas_teste"]
+medianas = meta["medianas_treino"]
+valor_max = float(meta["ranges_treino"]["Amount"]["max"])
+algoritmo = meta.get("algoritmo", "")
 
 
 def dinheiro(v):
@@ -55,7 +59,6 @@ def prever(linha_base, valor, hora):
     x["Amount"] = float(valor)
     x["hora_relativa"] = float(hora)
     return float(pipeline.predict_proba(x)[0, 1])
-
 
 
 with st.sidebar:
@@ -74,88 +77,158 @@ with st.sidebar:
         st.write(f"**Fraude na base de treino:** {meta['prevalencia_treino'] * 100:.3f}%")
         st.write(f"**Treinado em:** {meta['data_treino']}")
 
-
 st.title("Esta transação é fraude?")
 st.write(
-    "O modelo analisa uma compra de cartão e diz a **chance de ser fraude**. "
-    "Se passar de **{:.0%}**, o sistema levanta um alerta.".format(limiar)
+    f"O modelo analisa uma compra de cartão e dá uma **pontuação de risco** de fraude. "
+    f"Se passar de **{limiar:.0%}**, o sistema levanta um alerta."
 )
 
-
-st.subheader("1. Escolha uma transação")
+st.subheader("1. Escolha o perfil da transação")
+st.caption(
+    "O perfil reúne as 28 características anonimizadas do cartão e da compra (V1 a V28), "
+    "que são o que mais pesa na decisão. Valor e horário você ajusta no passo 2."
+)
 letras = "ABCDEFGHIJ"
-ids = list(range(len(exemplos)))
+opcoes = list(range(len(exemplos))) + [TIPICO]
 
 
 def nome_caso(i):
+    if i == TIPICO:
+        return "Perfil típico (compra comum)"
     r = exemplos.iloc[i]
     return f"{letras[i]} · {dinheiro(r['Amount'])} às {int(r['hora_relativa']):02d}h"
 
 
-caso = st.radio("Transação", ids, format_func=nome_caso, horizontal=True, label_visibility="collapsed")
-linha = exemplos.iloc[caso]
+caso = st.radio("Perfil", opcoes, format_func=nome_caso, horizontal=True, label_visibility="collapsed")
+
+if caso == TIPICO:
+    linha = pd.Series({c: float(medianas[c]) for c in features})
+    valor_orig, hora_orig = float(medianas["Amount"]), int(round(medianas["hora_relativa"]))
+else:
+    linha = exemplos.iloc[caso]
+    valor_orig, hora_orig = float(linha["Amount"]), int(linha["hora_relativa"])
+
 k_valor, k_hora = f"valor_{caso}", f"hora_{caso}"
-st.session_state.setdefault(k_valor, float(linha["Amount"]))
-st.session_state.setdefault(k_hora, int(linha["hora_relativa"]))
+colunas_v = [c for c in features if c.startswith("V")]
+st.session_state.setdefault(k_valor, valor_orig)
+st.session_state.setdefault(k_hora, hora_orig)
+for c in colunas_v:
+    st.session_state.setdefault(f"v_{caso}_{c}", float(linha[c]))
 
 
 def voltar_original():
-    st.session_state[k_valor] = float(linha["Amount"])
-    st.session_state[k_hora] = int(linha["hora_relativa"])
-
+    st.session_state[k_valor] = valor_orig
+    st.session_state[k_hora] = hora_orig
+    for c in colunas_v:
+        st.session_state[f"v_{caso}_{c}"] = float(linha[c])
 
 
 st.subheader("2. Valor e horário")
 c1, c2 = st.columns(2)
-valor = c1.number_input(f"Valor da compra ({MOEDA})", min_value=0.0, max_value=25000.0, step=10.0,
-                        format="%.2f", key=k_valor)
+valor = c1.number_input(f"Valor da compra ({MOEDA})", min_value=0.0, max_value=valor_max, step=10.0,
+                        format="%.2f", key=k_valor, help="Digite o valor e aperte Enter.")
 hora = c2.slider("Horário (hora do dia, 0 a 23)", 0, 23, key=k_hora)
+
+with st.expander("Avançado: editar as 28 características do perfil (V1 a V28)"):
+    st.caption("Componentes anonimizados fornecidos pelo provedor da base, sem interpretação direta. "
+               "Já vêm preenchidos com os valores do perfil escolhido.")
+    grade = st.columns(4)
+    for i, c in enumerate(colunas_v):
+        with grade[i % 4]:
+            st.number_input(c, step=0.1, format="%.8f", key=f"v_{caso}_{c}")
+
 st.button("↺ Voltar aos valores originais", on_click=voltar_original)
 
+linha_atual = linha.copy()
+for c in colunas_v:
+    linha_atual[c] = float(st.session_state[f"v_{caso}_{c}"])
+perfil_alterado = not all(np.isclose(float(linha_atual[c]), float(linha[c]), rtol=0.0, atol=1e-8) for c in colunas_v)
 
-proba = prever(linha, valor, hora)
+proba = prever(linha_atual, valor, hora)
+proba_orig = prever(linha, valor_orig, hora_orig)
 eh_fraude = proba >= limiar
 
 st.subheader("3. Resultado")
-r1, r2 = st.columns([1, 1])
-r1.metric("Chance de ser fraude", f"{proba:.1%}")
+r1, r2 = st.columns(2)
+r1.metric(
+    "Pontuação de risco de fraude",
+    f"{proba:.2%}",
+    delta=f"{(proba - proba_orig) * 100:+.2f} pp vs. original",
+    delta_color="off",
+)
 with r2:
     if eh_fraude:
         st.error("### 🚨 Possível fraude\nEncaminhar para revisão ou bloqueio.")
     else:
         st.success("### ✅ Parece legítima\nPode seguir normalmente.")
 st.progress(min(max(proba, 0.0), 1.0))
-st.caption(f"Alerta dispara a partir de {limiar:.0%}.")
+st.caption(f"O alerta dispara a partir de {limiar:.0%}. Mexer em valor e horário muda a pontuação, "
+           "mas pouco: o perfil (V1 a V28) é o que mais decide.")
 
 
-if st.toggle("Mostrar a resposta real"):
+if caso != TIPICO and st.toggle("Mostrar a resposta real"):
     real_fraude = int(linha["y_real"]) == 1
-    acertou = real_fraude == eh_fraude
     st.write(f"Na vida real, esta transação **{'era fraude' if real_fraude else 'era legítima'}**.")
-    if acertou:
+    if real_fraude == eh_fraude:
         st.success("O modelo acertou.")
     else:
         st.warning("O modelo errou neste caso. Nenhum modelo acerta tudo.")
     st.caption(f"Tipo de caso: {linha['rotulo']}")
 
-
-with st.expander("Por que o valor e o horário quase não mudam o resultado?"):
+with st.expander("Por que valor e horário mudam pouco o resultado?"):
     st.write(
-        "A decisão do modelo vem principalmente de **28 características anonimizadas** (V1 a V28) "
-        "que o banco calcula a partir dos dados do cartão e da compra. Elas ficam fixas em cada "
-        "transação de exemplo, e por isso você só mexe em valor e horário. "
-        "Esses dois campos ajudam pouco. Repare que mudar o valor para qualquer número "
-        "raramente inverte o veredito."
+        "O modelo decide principalmente pelas 28 características anonimizadas (V1 a V28). "
+        "Elas ficam fixas em cada perfil. Valor e horário entram no cálculo, mas têm peso pequeno. "
+        "Os gráficos mostram a pontuação deste perfil variando só um deles de cada vez."
     )
-    montantes = np.geomspace(0.5, 5000, 30)
-    curva = pd.DataFrame({"Chance de fraude": [prever(linha, m, hora) for m in montantes]},
-                         index=pd.Index(np.round(montantes, 2), name=f"Valor ({MOEDA})"))
-    st.line_chart(curva, y_label="Chance de fraude", height=220)
-    st.caption("Chance de fraude desta transação ao variar só o valor (horário mantido).")
+    aba_valor, aba_hora = st.tabs(["Variando o valor", "Variando o horário"])
+    with aba_valor:
+        montantes = np.geomspace(0.5, min(5000.0, valor_max), 30)
+        curva = pd.DataFrame({"Pontuação de risco": [prever(linha_atual, m, hora) for m in montantes]},
+                             index=pd.Index(np.round(montantes, 2), name=f"Valor ({MOEDA})"))
+        st.line_chart(curva, height=220)
+    with aba_hora:
+        horas = list(range(24))
+        curva_h = pd.DataFrame({"Pontuação de risco": [prever(linha_atual, valor, h) for h in horas]},
+                               index=pd.Index(horas, name="Hora do dia"))
+        st.line_chart(curva_h, height=220)
+
+with st.expander("Verificação técnica: o app confere com o notebook?"):
+    if caso != TIPICO and not perfil_alterado and abs(valor - valor_orig) < 1e-9 and hora == hora_orig:
+        proba_nb = float(linha["proba_notebook"])
+        diferenca = abs(proba - proba_nb)
+        p1, p2, p3 = st.columns(3)
+        p1.metric("No notebook", f"{proba_nb:.6f}")
+        p2.metric("No aplicativo", f"{proba:.6f}")
+        p3.metric("Diferença", f"{diferenca:.2e}")
+        if diferenca < TOLERANCIA_PARIDADE:
+            st.success("Paridade confirmada: o app dá a mesma previsão do notebook.")
+        else:
+            st.error("Divergência entre app e notebook. Verifique as versões das bibliotecas.")
+    else:
+        st.info("Escolha uma transação de exemplo (A, B, ...) e volte aos valores originais para comparar com o notebook.")
+    entrada = pd.DataFrame([linha_atual[features].astype(float)], columns=features)
+    entrada["Amount"], entrada["hora_relativa"] = float(valor), float(hora)
+    st.caption("Valores enviados ao modelo:")
+    st.dataframe(entrada.T.rename(columns={0: "valor"}))
 
 with st.expander("Como funciona, em uma frase"):
-    st.write(
-        "Um Random Forest (muitas árvores de decisão votando) aprendeu, com centenas de milhares de transações "
-        "reais, quais combinações de características aparecem em fraudes, e devolve a fração de "
-        "árvores que votam 'fraude'. Só cerca de 0,17% das transações da base são fraude."
-    )
+    if algoritmo == "XGBoost":
+        st.write(
+            "Um XGBoost (muitas árvores de decisão em sequência, cada uma corrigindo os erros da anterior) "
+            "aprendeu, com centenas de milhares de transações reais, quais combinações de características "
+            "aparecem em fraudes e devolve uma pontuação de risco entre 0% e 100%. "
+            "Só cerca de 0,17% das transações da base são fraude."
+        )
+    elif algoritmo == "Random Forest":
+        st.write(
+            "Um Random Forest (muitas árvores de decisão votando) aprendeu, com centenas de milhares de "
+            "transações reais, quais combinações de características aparecem em fraudes, e devolve a fração "
+            "de árvores que votam 'fraude'. Só cerca de 0,17% das transações da base são fraude."
+        )
+    else:
+        st.write(
+            f"O modelo ({meta['modelo_nome']}) aprendeu, com centenas de milhares de transações reais, "
+            "quais combinações de características aparecem em fraudes. Só cerca de 0,17% das transações "
+            "da base são fraude."
+        )
