@@ -19,19 +19,23 @@ st.set_page_config(page_title="Detector de Fraude", page_icon="🛡️", layout=
 
 
 @st.cache_resource
-def carregar_modelo():
+def carregar_modelo(versao):
     return joblib.load(CAMINHO_MODELO)
 
 
 @st.cache_data
-def carregar_metadados():
+def carregar_metadados(versao):
     with open(CAMINHO_META, encoding="utf-8") as f:
         return json.load(f)
 
 
 @st.cache_data
-def carregar_exemplos():
+def carregar_exemplos(versao):
     return pd.read_csv(CAMINHO_EXEMPLOS)
+
+
+def versao_arquivo(caminho):
+    return caminho.stat().st_mtime_ns if caminho.exists() else 0
 
 
 ausentes = [p.name for p in (CAMINHO_MODELO, CAMINHO_META, CAMINHO_EXEMPLOS) if not p.exists()]
@@ -39,9 +43,9 @@ if ausentes:
     st.error(f"Arquivos não encontrados em modelo/: {', '.join(ausentes)}. Execute o notebook completo antes.")
     st.stop()
 
-pipeline = carregar_modelo()
-meta = carregar_metadados()
-exemplos = carregar_exemplos()
+pipeline = carregar_modelo(versao_arquivo(CAMINHO_MODELO))
+meta = carregar_metadados(versao_arquivo(CAMINHO_META))
+exemplos = carregar_exemplos(versao_arquivo(CAMINHO_EXEMPLOS))
 features = meta["features"]
 limiar = float(meta["limiar_decisao"])
 mt = meta["metricas_teste"]
@@ -122,7 +126,6 @@ def voltar_original():
     for c in colunas_v:
         st.session_state[f"v_{caso}_{c}"] = float(linha[c])
 
-
 st.subheader("2. Valor e horário")
 c1, c2 = st.columns(2)
 valor = c1.number_input(f"Valor da compra ({MOEDA})", min_value=0.0, max_value=valor_max, step=10.0,
@@ -164,7 +167,6 @@ with r2:
 st.progress(min(max(proba, 0.0), 1.0))
 st.caption(f"O alerta dispara a partir de {limiar:.0%}. Mexer em valor e horário muda a pontuação, "
            "mas pouco: o perfil (V1 a V28) é o que mais decide.")
-
 
 if caso != TIPICO and st.toggle("Mostrar a resposta real"):
     real_fraude = int(linha["y_real"]) == 1
