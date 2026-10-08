@@ -7,7 +7,7 @@
 ## Links
 
 - **GitHub**: https://github.com/PedroH-Batista/Checkpoint-Data-Science.git
-- **Aplicação Streamlit**: 
+- **Aplicação Streamlit**: https://checkpoint-data-science-2yayvmmk43vdea3kmx2e7t.streamlit.app/
 
 ## Objetivo
 
@@ -86,7 +86,7 @@ Os três algoritmos usam o mesmo teste, os mesmos folds, a mesma métrica e o me
 
 ## Resultados
 
-Execute o notebook até o final: a última célula imprime as tabelas abaixo já em formato Markdown, prontas para colar.
+Execute o notebook até o final.
 
 ### Comparação das nove configurações (validação cruzada no treino)
 
