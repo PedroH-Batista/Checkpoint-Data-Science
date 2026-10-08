@@ -11,10 +11,10 @@ CAMINHO_MODELO = BASE / "modelo" / "modelo.pkl"
 CAMINHO_META = BASE / "modelo" / "metadados.json"
 CAMINHO_EXEMPLOS = BASE / "modelo" / "exemplos_consistencia.csv"
 
-OPCAO_MANUAL = "Entrada manual (medianas do treino)"
-TOLERANCIA_PARIDADE = 1e-4
 
-st.set_page_config(page_title="Detecção de Fraude em Cartão de Crédito", layout="wide")
+MOEDA = "€"
+
+st.set_page_config(page_title="Detector de Fraude", page_icon="🛡️", layout="centered")
 
 
 @st.cache_resource
@@ -33,168 +33,129 @@ def carregar_exemplos():
     return pd.read_csv(CAMINHO_EXEMPLOS)
 
 
-arquivos_ausentes = [p.name for p in (CAMINHO_MODELO, CAMINHO_META, CAMINHO_EXEMPLOS) if not p.exists()]
-if arquivos_ausentes:
-    st.error(
-        f"Arquivos não encontrados em modelo/: {', '.join(arquivos_ausentes)}. "
-        "Execute o notebook completo para gerar os artefatos antes de abrir o aplicativo."
-    )
+ausentes = [p.name for p in (CAMINHO_MODELO, CAMINHO_META, CAMINHO_EXEMPLOS) if not p.exists()]
+if ausentes:
+    st.error(f"Arquivos não encontrados em modelo/: {', '.join(ausentes)}. Execute o notebook completo antes.")
     st.stop()
 
 pipeline = carregar_modelo()
 meta = carregar_metadados()
 exemplos = carregar_exemplos()
-
 features = meta["features"]
-ranges = meta["ranges_treino"]
-medianas = meta["medianas_treino"]
 limiar = float(meta["limiar_decisao"])
+mt = meta["metricas_teste"]
 
 
-def chave(col):
-    return f"in_{col}"
+def dinheiro(v):
+    return f"{MOEDA} {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
-def converter(col, valor):
-    return int(round(valor)) if col == "hora_relativa" else float(valor)
+def prever(linha_base, valor, hora):
+    x = pd.DataFrame([linha_base[features].astype(float)], columns=features)
+    x["Amount"] = float(valor)
+    x["hora_relativa"] = float(hora)
+    return float(pipeline.predict_proba(x)[0, 1])
 
 
-def restaurar_medianas():
-    for col in features:
-        st.session_state[chave(col)] = converter(col, medianas[col])
-
-
-def aplicar_selecao():
-    escolha = st.session_state["seletor_exemplo"]
-    if escolha == OPCAO_MANUAL:
-        restaurar_medianas()
-        return
-    linha = exemplos[exemplos["rotulo"] == escolha].iloc[0]
-    for col in features:
-        st.session_state[chave(col)] = converter(col, linha[col])
-
-
-for col in features:
-    st.session_state.setdefault(chave(col), converter(col, medianas[col]))
-st.session_state.setdefault("seletor_exemplo", OPCAO_MANUAL)
 
 with st.sidebar:
-    st.header("Sobre o modelo")
-    st.write(f"**Configuração:** {meta['modelo_nome']}")
-    st.write(f"**Métrica principal:** {meta['metrica_principal']}")
-    st.write(f"**Treinado em:** {meta['data_treino']}")
-    st.write(f"**Limiar de decisão:** {limiar:.4f}")
+    st.header("Como o modelo se saiu")
+    st.caption("Medido em transações que ele nunca tinha visto (conjunto de teste).")
+    st.metric("Alertas que eram fraude de verdade", f"{mt['Precision']:.0%}",
+              help="Precision: de cada 100 alertas, quantos eram fraude.")
+    st.metric("Fraudes que o modelo pegou", f"{mt['Recall']:.0%}",
+              help="Recall: de cada 100 fraudes reais, quantas foram apanhadas.")
+    with st.expander("Detalhes técnicos"):
+        st.write(f"**Modelo:** {meta['modelo_nome']}")
+        st.write(f"**PR-AUC:** {mt['PR-AUC (AP)']:.4f}")
+        st.write(f"**ROC-AUC:** {mt['ROC-AUC']:.4f}")
+        st.write(f"**F1:** {mt['F1']:.3f}")
+        st.write(f"**Limiar de decisão:** {limiar:.4f}")
+        st.write(f"**Fraude na base de treino:** {meta['prevalencia_treino'] * 100:.3f}%")
+        st.write(f"**Treinado em:** {meta['data_treino']}")
 
-    mt = meta["metricas_teste"]
-    st.subheader("Métricas no conjunto de teste")
-    st.metric("PR-AUC", f"{mt['PR-AUC (AP)']:.4f}")
-    st.metric("ROC-AUC", f"{mt['ROC-AUC']:.4f}")
-    c1, c2 = st.columns(2)
-    c1.metric("Precision", f"{mt['Precision']:.3f}")
-    c2.metric("Recall", f"{mt['Recall']:.3f}")
-    st.metric("F1", f"{mt['F1']:.3f}")
 
-    mc = meta["metricas_cv"]
-    st.caption(f"Validação cruzada (treino): PR-AUC = {mc['AP_media']:.4f} +/- {mc['AP_dp']:.4f}")
-    st.caption(f"Prevalência de fraude no treino: {meta['prevalencia_treino'] * 100:.3f}%")
-
-st.title("Detecção de Fraude em Transações de Cartão de Crédito")
-st.caption(
-    "Checkpoint 5 — Data Science & Statistical Computing (FIAP, 2026). "
-    "O aplicativo usa o mesmo pipeline salvo pelo notebook, sem refazer o pré-processamento."
+st.title("Esta transação é fraude?")
+st.write(
+    "O modelo analisa uma compra de cartão e diz a **chance de ser fraude**. "
+    "Se passar de **{:.0%}**, o sistema levanta um alerta.".format(limiar)
 )
 
-st.subheader("1. Dados da transação")
 
-st.selectbox(
-    "Origem dos dados",
-    [OPCAO_MANUAL] + list(exemplos["rotulo"]),
-    key="seletor_exemplo",
-    on_change=aplicar_selecao,
-    help="Escolha um caso do teste de consistência do notebook para reproduzir a previsão e verificar a paridade.",
-)
+st.subheader("1. Escolha uma transação")
+letras = "ABCDEFGHIJ"
+ids = list(range(len(exemplos)))
 
-col_a, col_b = st.columns(2)
-with col_a:
-    st.slider("Hora relativa ao início da captura (0 a 23)", min_value=0, max_value=23, key=chave("hora_relativa"))
-with col_b:
-    st.number_input("Valor da transação (Amount)", min_value=0.0, step=1.0, format="%.4f", key=chave("Amount"))
 
-with st.expander("Componentes anonimizados (V1 a V28)", expanded=False):
-    st.caption("Componentes principais fornecidos pelo provedor da base. Não possuem interpretação direta.")
-    colunas_v = [c for c in features if c.startswith("V")]
-    grade = st.columns(4)
-    for i, col in enumerate(colunas_v):
-        with grade[i % 4]:
-            st.number_input(col, step=0.1, format="%.8f", key=chave(col))
+def nome_caso(i):
+    r = exemplos.iloc[i]
+    return f"{letras[i]} · {dinheiro(r['Amount'])} às {int(r['hora_relativa']):02d}h"
 
-st.button("Restaurar medianas do treino", on_click=restaurar_medianas)
 
-entrada = pd.DataFrame(
-    [{col: st.session_state[chave(col)] for col in features}],
-    columns=features,
-)
+caso = st.radio("Transação", ids, format_func=nome_caso, horizontal=True, label_visibility="collapsed")
+linha = exemplos.iloc[caso]
+k_valor, k_hora = f"valor_{caso}", f"hora_{caso}"
+st.session_state.setdefault(k_valor, float(linha["Amount"]))
+st.session_state.setdefault(k_hora, int(linha["hora_relativa"]))
 
-fora_do_range = []
-for col in features:
-    valor = float(entrada.loc[0, col])
-    if valor < ranges[col]["min"] or valor > ranges[col]["max"]:
-        fora_do_range.append(
-            f"{col} = {valor:.4f} (treino: {ranges[col]['min']:.4f} a {ranges[col]['max']:.4f})"
-        )
 
-st.subheader("2. Previsão")
+def voltar_original():
+    st.session_state[k_valor] = float(linha["Amount"])
+    st.session_state[k_hora] = int(linha["hora_relativa"])
 
-if fora_do_range:
-    st.warning(
-        "Alerta de extrapolação: os valores abaixo estão fora do intervalo observado no treino, "
-        "e a previsão pode ser menos confiável.\n\n- " + "\n- ".join(fora_do_range)
-    )
 
-proba = float(pipeline.predict_proba(entrada)[0, 1])
+
+st.subheader("2. Valor e horário")
+c1, c2 = st.columns(2)
+valor = c1.number_input(f"Valor da compra ({MOEDA})", min_value=0.0, max_value=25000.0, step=10.0,
+                        format="%.2f", key=k_valor)
+hora = c2.slider("Horário (hora do dia, 0 a 23)", 0, 23, key=k_hora)
+st.button("↺ Voltar aos valores originais", on_click=voltar_original)
+
+
+proba = prever(linha, valor, hora)
 eh_fraude = proba >= limiar
 
-col1, col2, col3 = st.columns(3)
-col1.metric("Probabilidade de fraude", f"{proba:.2%}")
-col2.metric("Limiar de decisão", f"{limiar:.2%}")
-col3.metric("Razão em relação ao limiar", f"{proba / limiar:.2f}x")
-
-st.progress(min(max(proba, 0.0), 1.0))
-
-if eh_fraude:
-    st.error("Transação classificada como SUSPEITA DE FRAUDE: encaminhar para revisão ou bloqueio.")
-else:
-    st.success("Transação classificada como LEGÍTIMA.")
-
-st.caption(
-    "A probabilidade de fraude é a saída de predict_proba. A decisão usa o limiar definido no treino "
-    "(máximo F1 sobre previsões out-of-fold), e não o valor fixo 0,5."
-)
-
-escolha_atual = st.session_state["seletor_exemplo"]
-if escolha_atual != OPCAO_MANUAL:
-    st.subheader("3. Paridade com o notebook")
-    linha = exemplos[exemplos["rotulo"] == escolha_atual].iloc[0]
-    entradas_iguais = all(
-        np.isclose(float(entrada.loc[0, col]), float(linha[col]), rtol=0.0, atol=1e-8) for col in features
-    )
-    if entradas_iguais:
-        proba_nb = float(linha["proba_notebook"])
-        diferenca = abs(proba - proba_nb)
-        p1, p2, p3 = st.columns(3)
-        p1.metric("Probabilidade no notebook", f"{proba_nb:.6f}")
-        p2.metric("Probabilidade no aplicativo", f"{proba:.6f}")
-        p3.metric("Diferença absoluta", f"{diferenca:.2e}")
-        st.write(
-            f"Valor real no teste (y): **{int(linha['y_real'])}** | "
-            f"previsão no notebook: **{int(linha['previsao_notebook'])}**"
-        )
-        if diferenca < TOLERANCIA_PARIDADE:
-            st.success("Paridade confirmada: a previsão do aplicativo coincide com a do notebook.")
-        else:
-            st.error("Divergência entre o aplicativo e o notebook. Verifique as versões das bibliotecas.")
+st.subheader("3. Resultado")
+r1, r2 = st.columns([1, 1])
+r1.metric("Chance de ser fraude", f"{proba:.1%}")
+with r2:
+    if eh_fraude:
+        st.error("### 🚨 Possível fraude\nEncaminhar para revisão ou bloqueio.")
     else:
-        st.info("Os valores foram alterados em relação ao caso escolhido, então a comparação com o notebook não se aplica.")
+        st.success("### ✅ Parece legítima\nPode seguir normalmente.")
+st.progress(min(max(proba, 0.0), 1.0))
+st.caption(f"Alerta dispara a partir de {limiar:.0%}.")
 
-with st.expander("Valores enviados ao modelo"):
-    st.dataframe(entrada.T.rename(columns={0: "valor"}))
+
+if st.toggle("Mostrar a resposta real"):
+    real_fraude = int(linha["y_real"]) == 1
+    acertou = real_fraude == eh_fraude
+    st.write(f"Na vida real, esta transação **{'era fraude' if real_fraude else 'era legítima'}**.")
+    if acertou:
+        st.success("O modelo acertou.")
+    else:
+        st.warning("O modelo errou neste caso. Nenhum modelo acerta tudo.")
+    st.caption(f"Tipo de caso: {linha['rotulo']}")
+
+
+with st.expander("Por que o valor e o horário quase não mudam o resultado?"):
+    st.write(
+        "A decisão do modelo vem principalmente de **28 características anonimizadas** (V1 a V28) "
+        "que o banco calcula a partir dos dados do cartão e da compra. Elas ficam fixas em cada "
+        "transação de exemplo, e por isso você só mexe em valor e horário. "
+        "Esses dois campos ajudam pouco. Repare que mudar o valor para qualquer número "
+        "raramente inverte o veredito."
+    )
+    montantes = np.geomspace(0.5, 5000, 30)
+    curva = pd.DataFrame({"Chance de fraude": [prever(linha, m, hora) for m in montantes]},
+                         index=pd.Index(np.round(montantes, 2), name=f"Valor ({MOEDA})"))
+    st.line_chart(curva, y_label="Chance de fraude", height=220)
+    st.caption("Chance de fraude desta transação ao variar só o valor (horário mantido).")
+
+with st.expander("Como funciona, em uma frase"):
+    st.write(
+        "Um Random Forest (muitas árvores de decisão votando) aprendeu, com centenas de milhares de transações "
+        "reais, quais combinações de características aparecem em fraudes, e devolve a fração de "
+        "árvores que votam 'fraude'. Só cerca de 0,17% das transações da base são fraude."
+    )
